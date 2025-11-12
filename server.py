@@ -2,9 +2,7 @@ import os
 import requests
 from fastmcp import FastMCP
 
-# ---------------------
-# Create app
-# ---------------------
+# Server instance (old versions don’t support extra params like enable_ws / sse_path)
 app = FastMCP("ProductHunt MCP")
 
 @app.tool()
@@ -12,7 +10,7 @@ def ph_posts(start: str, end: str = None, first: int = 50):
     """Fetch Product Hunt posts between given dates."""
     token = os.getenv("PRODUCTHUNT_TOKEN")
     if not token:
-        raise RuntimeError("Missing PRODUCTHUNT_TOKEN env var")
+        raise RuntimeError("Missing PRODUCTHUNT_TOKEN environment variable")
 
     if not end:
         end = start
@@ -36,7 +34,7 @@ def ph_posts(start: str, end: str = None, first: int = 50):
     }
     """
 
-    resp = requests.post(
+    response = requests.post(
         "https://api.producthunt.com/v2/api/graphql",
         headers={
             "Authorization": f"Bearer {token}",
@@ -52,8 +50,8 @@ def ph_posts(start: str, end: str = None, first: int = 50):
         },
         timeout=30,
     )
-    resp.raise_for_status()
-    data = resp.json()
+    response.raise_for_status()
+    data = response.json()
 
     posts = []
     for edge in data.get("data", {}).get("posts", {}).get("edges", []):
@@ -71,15 +69,7 @@ def ph_posts(start: str, end: str = None, first: int = 50):
     return posts
 
 
-# ---------------------
-# Run server
-# ---------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    app.run(
-        transport="http",
-        host="0.0.0.0",
-        port=port,
-        enable_ws=True,
-        log_level="debug"
-    )
+    # Minimal syntax supported by 2.9
+    app.run("http", host="0.0.0.0", port=port)

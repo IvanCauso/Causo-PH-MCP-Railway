@@ -1,130 +1,124 @@
 import os
-import requests
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
-from fastmcp import FastMCP
+import urllib.parse
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 
-# --- Patch Uvicorn WS backend mapping on platforms where 'websockets-sansio' key is missing ---
-# Some builds ship Uvicorn without that key, which causes KeyError during Config.load().
-try:
-    import uvicorn.config as _uvc  # type: ignore
-    if "websockets-sansio" not in getattr(_uvc, "WS_PROTOCOLS", {}):
-        # Make a mutable copy, add an alias, then re-assign (original may be a MappingProxyType)
-        _ws = dict(_uvc.WS_PROTOCOLS)
-        # Prefer the classic websockets backend if present
-        _ws["websockets-sansio"] = _ws.get(
-            "websockets",
-            "uvicorn.protocols.websockets.websockets_impl.WebSocketProtocol",
-        )
-        _uvc.WS_PROTOCOLS = _ws  # rebind the module-level mapping
-except Exception:
-    # Safe to continue; FastMCP will try to start and show a clear error if something else is wrong
-    pass
-# --- End patch ---
+import requests
+from fastapi import FastAPI, Request
+from fastmcp import FastMCP, tool
 
 app = FastMCP("ProductHunt MCP")
-PH_URL = "https://api.producthunt.com/v2/api/graphql"
 
-def _ph_headers() -> Dict[str, str]:
-    token = os.environ.get("PRODUCTHUNT_TOKEN")
+# ---------------------------------------------------
+# Tool
+# ---------------------------------------------------
+@tool
+def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Dict[str, Any]]:
+    token = os.getenv("PRODUCTHUNT_TOKEN", "")
     if not token:
-        raise RuntimeError("PRODUCTHUNT_TOKEN not set")
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        raise RuntimeError("PRODUCTHUNT_TOKEN missing")
 
-def _iso_day_bounds(day_str: str) -> tuple[str, str]:
-    # postedAfter inclusive, postedBefore exclusive
-    dt = datetime.fromisoformat(day_str).replace(tzinfo=timezone.utc)
-    after = dt.isoformat().replace("+00:00", "Z")
-    before = (dt + timedelta(days=1)).isoformat().replace("+00:00", "Z")
-    return after, before
+    if not end:
+        end = start
+    start_dt = f"{start}T00:00:00Z"
+    end_dt = f"{end}T23:59:59Z"
 
-_QUERY = """
-query($after: DateTime!, $before: DateTime!, $first: Int!, $cursor: String) {
-  posts(
-    postedAfter: $after,
-    postedBefore: $before,
-    first: $first,
-    after: $cursor,
-    order: RANKING
-  ) {
-    edges {
-      node {
-        id
-        name
-        tagline
-        votesCount
-        createdAt
-        website
-        slug
-        makers { name username }
+    query = """
+    query ($start: DateTime!, $end: DateTime!, $first: Int!) {
+      posts(postedAfter: $start, postedBefore: $end, first: $first, order: VOTES_COUNT) {
+        edges { node { id name tagline votesCount createdAt website slug makers { name username } } }
       }
     }
-    pageInfo { endCursor hasNextPage }
-  }
-}
-"""
-
-def _fetch_day(day_str: str, budget: int) -> List[Dict[str, Any]]:
-    after, before = _iso_day_bounds(day_str)
-    items: List[Dict[str, Any]] = []
-    cursor: Optional[str] = None
-
-    while budget > 0:
-        body = {
-            "query": _QUERY,
-            "variables": {
-                "after": after,
-                "before": before,
-                "first": min(30, budget),
-                "cursor": cursor,
-            },
+    """
+    res = requests.post(
+        "https://api.producthunt.com/v2/api/graphql",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"query": query, "variables": {"start": start_dt, "end": end_dt, "first": first}},
+        timeout=30,
+    )
+    res.raise_for_status()
+    data = res.json()
+    edges = data.get("data", {}).get("posts", {}).get("edges", [])
+    return [
+        {
+            "id": n["id"],
+            "name": n["name"],
+            "tagline": n["tagline"],
+            "votesCount": n["votesCount"],
+            "createdAt": n["createdAt"],
+            "website": n["website"],
+            "slug": n["slug"],
+            "makers": [{"name": m["name"], "username": m["username"]} for m in n.get("makers", [])],
         }
-        r = requests.post(PH_URL, headers=_ph_headers(), json=body, timeout=30)
-        r.raise_for_status()
-        payload = r.json()
-        if payload.get("errors"):
-            raise RuntimeError(f"Product Hunt GraphQL error: {payload['errors']}")
+        for e in edges
+        if (n := e.get("node"))
+    ]
 
-        posts = (payload.get("data") or {}).get("posts") or {}
-        edges = posts.get("edges") or []
-        items.extend([e["node"] for e in edges])
+# ---------------------------------------------------
+# Patch FastMCP HTTP transport to recover lost ?session=
+# ---------------------------------------------------
+from fastmcp.server.server import HTTPTransport
 
-        page = posts.get("pageInfo") or {}
-        budget -= len(edges)
-        if not page.get("hasNextPage"):
-            break
-        cursor = page.get("endCursor")
+orig_asgi_app = HTTPTransport.asgi_app
 
-    return items
+async def patched_asgi_app(self, scope, receive, send):
+    if scope["type"] == "http":
+        # Try to manually parse query if proxy stripped it
+        qs = scope.get("query_string", b"").decode()
+        if "session=" not in qs and scope.get("path", "").startswith("/mcp"):
+            raw_url = scope.get("raw_path", b"").decode()
+            if "?" in raw_url:
+                query = raw_url.split("?", 1)[1]
+                scope["query_string"] = query.encode()
+    return await orig_asgi_app(self, scope, receive, send)
 
-@app.tool(
-    name="ph_posts",
-    description="Return up to `first` Product Hunt posts between UTC dates start..end (YYYY-MM-DD). If end is omitted, fetch a single day."
-)
-def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Dict[str, Any]]:
-    try:
-        _ = datetime.fromisoformat(start)
-        if end:
-            _ = datetime.fromisoformat(end)
-    except Exception:
-        raise ValueError("Dates must be ISO format YYYY-MM-DD")
+HTTPTransport.asgi_app = patched_asgi_app
 
-    if first <= 0:
-        return []
+# ---------------------------------------------------
+# Discovery + health
+# ---------------------------------------------------
+fa = FastAPI()
 
-    end = end or start
-    out: List[Dict[str, Any]] = []
+@app.mount_http_app(fa)
+def _mount():
+    pass
 
-    cur = datetime.fromisoformat(start).date()
-    end_d = datetime.fromisoformat(end).date()
+@fa.get("/.well-known/mcp.json")
+def mcp_discovery():
+    base = os.getenv("PUBLIC_BASE_URL", "https://causo-ph-mcp-railway-production.up.railway.app").rstrip("/")
+    host = base.removeprefix("https://").removeprefix("http://")
+    return {
+        "servers": [{
+            "name": "ProductHunt MCP",
+            "sse_url": f"{base}/mcp",
+            "ws_url":  f"wss://{host}/mcp/ws"
+        }]
+    }
 
-    while cur <= end_d and len(out) < first:
-        out.extend(_fetch_day(cur.isoformat(), first - len(out)))
-        cur += timedelta(days=1)
+@fa.get("/health")
+def health():
+    return {"ok": True}
 
-    return out[:first]
+# ---------------------------------------------------
+# WebSocket compatibility patch (Uvicorn >= 0.34)
+# ---------------------------------------------------
+try:
+    import uvicorn.config as _cfg
+    if "websockets" not in _cfg.WS_PROTOCOLS:
+        _cfg.WS_PROTOCOLS["websockets"] = "uvicorn.protocols.websockets.websockets_impl:WebSocketProtocol"
+except Exception:
+    pass
 
+# ---------------------------------------------------
+# Run
+# ---------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # HTTP transport exposes the MCP WebSocket on /mcp
-    app.run(transport="http", host="0.0.0.0", port=port)
+    app.run(
+        transport="http",
+        host="0.0.0.0",
+        port=port,
+        sse_path="/mcp",
+        ws_path="/mcp/ws",
+        log_level="debug"
+    )

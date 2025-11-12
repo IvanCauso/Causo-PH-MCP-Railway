@@ -80,8 +80,6 @@ if __name__ == "__main__":
         transport="http",
         host="0.0.0.0",
         port=port,
-        sse_path="/mcp",
-        ws_path="/mcp/ws",
-        log_level="debug",
         enable_ws=True,
+        log_level="debug",
     )

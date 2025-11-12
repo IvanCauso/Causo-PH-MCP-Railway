@@ -11,7 +11,7 @@ def _ph_headers() -> Dict[str, str]:
     token = os.environ.get("PRODUCTHUNT_TOKEN")
     if not token:
         raise RuntimeError("PRODUCTHUNT_TOKEN not set")
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer " + token, "Content-Type": "application/json"}
 
 def _iso_day_bounds(day_str: str) -> tuple[str, str]:
     dt = datetime.fromisoformat(day_str).replace(tzinfo=timezone.utc)
@@ -21,25 +21,11 @@ def _iso_day_bounds(day_str: str) -> tuple[str, str]:
 
 _QUERY = """
 query($after: DateTime!, $before: DateTime!, $first: Int!, $cursor: String) {
-  posts(
-    postedAfter: $after,
-    postedBefore: $before,
-    first: $first,
-    after: $cursor,
-    order: RANKING
-  ) {
-    edges {
-      node {
-        id
-        name
-        tagline
-        votesCount
-        createdAt
-        website
-        slug
-        makers { name username }
-      }
-    }
+  posts(postedAfter: $after, postedBefore: $before, first: $first, after: $cursor, order: RANKING) {
+    edges { node {
+      id name tagline votesCount createdAt website slug
+      makers { name username }
+    }}
     pageInfo { endCursor hasNextPage }
   }
 }
@@ -70,7 +56,7 @@ def _fetch_day(day_str: str, budget: int) -> List[Dict[str, Any]]:
 
 @app.tool(
     name="ph_posts",
-    description="Return up to `first` Product Hunt posts between UTC dates start..end (YYYY-MM-DD). If end is omitted, fetch a single day."
+    description="Return up to `first` Product Hunt posts between UTC dates start..end (YYYY-MM-DD). If end is omitted, fetch one day."
 )
 def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Dict[str, Any]]:
     try:
@@ -92,5 +78,5 @@ def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Di
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # HTTP transport exposes the MCP WebSocket on /mcp
+    # HTTP transport serves the MCP WebSocket on /mcp
     app.run(transport="http", host="0.0.0.0", port=port)

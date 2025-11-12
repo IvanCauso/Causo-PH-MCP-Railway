@@ -32,7 +32,7 @@ def ph_posts(start: str, end: str = None, first: int = 50):
 
         query = """
         query ($start: DateTime!, $end: DateTime!, $first: Int!) {
-          posts(postedAfter: $start, postedBefore: $end, first: $first, order: VOTES_COUNT) {
+          posts(postedAfter: $start, postedBefore: $end, first: $first, order: VOTES) {
             edges {
               node {
                 id

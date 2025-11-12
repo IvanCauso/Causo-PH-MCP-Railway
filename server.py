@@ -80,5 +80,5 @@ def ph_posts(start: str, end: str = None, first: int = 50):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # Run with HTTP transport for MCP
-    app.run(transport="sse", host="0.0.0.0", port=port)
+    # Run with HTTP transport for MCP - fastmcp 2.9 uses "http" not "sse"
+    app.run("http", host="0.0.0.0", port=port)

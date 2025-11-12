@@ -4,25 +4,19 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from fastmcp import FastMCP
 
-# MCP app
 app = FastMCP("ProductHunt MCP")
-
 PH_URL = "https://api.producthunt.com/v2/api/graphql"
 
 def _ph_headers() -> Dict[str, str]:
     token = os.environ.get("PRODUCTHUNT_TOKEN")
     if not token:
         raise RuntimeError("PRODUCTHUNT_TOKEN not set")
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 def _iso_day_bounds(day_str: str) -> tuple[str, str]:
-    # postedAfter is inclusive, postedBefore is exclusive
     dt = datetime.fromisoformat(day_str).replace(tzinfo=timezone.utc)
     after = dt.isoformat().replace("+00:00", "Z")
-    before = (dt + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    before = (dt + timedelta(days=1)).isoformat().replace("+00:00", "Z")  # postedBefore is exclusive
     return after, before
 
 _QUERY = """
@@ -58,12 +52,7 @@ def _fetch_day(day_str: str, budget: int) -> List[Dict[str, Any]]:
     while budget > 0:
         body = {
             "query": _QUERY,
-            "variables": {
-                "after": after,
-                "before": before,
-                "first": min(30, budget),
-                "cursor": cursor,
-            },
+            "variables": {"after": after, "before": before, "first": min(30, budget), "cursor": cursor},
         }
         r = requests.post(PH_URL, headers=_ph_headers(), json=body, timeout=30)
         r.raise_for_status()
@@ -83,7 +72,6 @@ def _fetch_day(day_str: str, budget: int) -> List[Dict[str, Any]]:
     description="Return up to `first` Product Hunt posts between UTC dates start..end (YYYY-MM-DD). If end is omitted, fetch a single day."
 )
 def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Dict[str, Any]]:
-    # Validate dates
     try:
         _ = datetime.fromisoformat(start)
         if end:
@@ -92,21 +80,17 @@ def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Di
         raise ValueError("Dates must be ISO format YYYY-MM-DD")
     if first <= 0:
         return []
-
     end = end or start
     out: List[Dict[str, Any]] = []
     cur = datetime.fromisoformat(start).date()
     end_d = datetime.fromisoformat(end).date()
-
     while cur <= end_d and len(out) < first:
         budget = first - len(out)
         out.extend(_fetch_day(cur.isoformat(), budget))
         cur += timedelta(days=1)
-
-    # Trim in case we overfetched
     return out[:first]
 
 if __name__ == "__main__":
-    # WebSocket transport for hosted environments like Railway
     port = int(os.getenv("PORT", "8080"))
-    app.run(transport="websocket", host="0.0.0.0", port=port)
+    # HTTP transport serves the MCP WebSocket on /mcp
+    app.run(transport="http", host="0.0.0.0", port=port)

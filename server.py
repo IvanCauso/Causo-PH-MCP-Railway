@@ -2,12 +2,21 @@ import os
 import requests
 from fastmcp import FastMCP
 
-# Server instance (old versions don’t support extra params like enable_ws / sse_path)
+# Server instance
 app = FastMCP("ProductHunt MCP")
 
 @app.tool()
 def ph_posts(start: str, end: str = None, first: int = 50):
-    """Fetch Product Hunt posts between given dates."""
+    """Fetch Product Hunt posts between given dates.
+    
+    Args:
+        start: Start date in YYYY-MM-DD format
+        end: End date in YYYY-MM-DD format (defaults to start date if not provided)
+        first: Maximum number of posts to return (default: 50)
+    
+    Returns:
+        List of Product Hunt posts with details including name, tagline, votes, and makers
+    """
     token = os.getenv("PRODUCTHUNT_TOKEN")
     if not token:
         raise RuntimeError("Missing PRODUCTHUNT_TOKEN environment variable")
@@ -71,5 +80,5 @@ def ph_posts(start: str, end: str = None, first: int = 50):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # Minimal syntax supported by 2.9
-    app.run("http", host="0.0.0.0", port=port)
+    # Run with HTTP transport for MCP
+    app.run(transport="sse", host="0.0.0.0", port=port)

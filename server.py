@@ -1,6 +1,7 @@
 import os, requests
 from datetime import datetime, timedelta, timezone
-from fastmcp import FastMCP, tool
+from typing import Optional
+from fastmcp import FastMCP
 
 PH_TOKEN = os.environ.get("PRODUCTHUNT_TOKEN")
 PH_URL = "https://api.producthunt.com/v2/api/graphql"
@@ -14,8 +15,8 @@ def _hdrs():
 
 def _day_bounds(d: str):
     dt = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
-    after = dt.isoformat().replace("+00:00","Z")
-    before = (dt + timedelta(days=1)).isoformat().replace("+00:00","Z")
+    after = dt.isoformat().replace("+00:00", "Z")
+    before = (dt + timedelta(days=1)).isoformat().replace("+00:00", "Z")  # postedBefore is exclusive
     return after, before
 
 _QUERY = """
@@ -30,8 +31,11 @@ query($after: DateTime!, $before: DateTime!, $first: Int!, $cursor: String) {
 }
 """
 
-@tool
-def ph_posts(start: str, end: str = None, first: int = 100) -> list:
+@app.tool(
+    name="ph_posts",
+    description="Return up to `first` Product Hunt posts between UTC dates start..end (YYYY-MM-DD). If end is omitted, fetch a single day."
+)
+def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> list:
     end = end or start
     items = []
     cur = datetime.fromisoformat(start).date()
@@ -56,5 +60,5 @@ def ph_posts(start: str, end: str = None, first: int = 100) -> list:
     return items[:first]
 
 if __name__ == "__main__":
-    # FastMCP starts a WS server and binds to PORT
+    # FastMCP will bind to PORT if provided by host
     app.run()

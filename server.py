@@ -2,10 +2,11 @@ import os
 import requests
 from fastmcp import FastMCP
 
-# Create the MCP app
+# ---------------------
+# Create app
+# ---------------------
 app = FastMCP("ProductHunt MCP")
 
-# Register tool manually (older-compatible style)
 @app.tool()
 def ph_posts(start: str, end: str = None, first: int = 50):
     """Fetch Product Hunt posts between given dates."""
@@ -51,7 +52,6 @@ def ph_posts(start: str, end: str = None, first: int = 50):
         },
         timeout=30,
     )
-
     resp.raise_for_status()
     data = resp.json()
 
@@ -72,7 +72,7 @@ def ph_posts(start: str, end: str = None, first: int = 50):
 
 
 # ---------------------
-# Run server with WS + SSE transport
+# Run server
 # ---------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
@@ -81,5 +81,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         enable_ws=True,
-        log_level="debug",
+        log_level="debug"
     )

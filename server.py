@@ -4,14 +4,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from fastmcp import FastMCP
 
-# Patch uvicorn to accept 'websockets-sansio' if the key is missing
-try:
-    import uvicorn.config as _uvc
-    if "websockets-sansio" not in _uvc.WS_PROTOCOLS and "websockets" in _uvc.WS_PROTOCOLS:
-        _uvc.WS_PROTOCOLS["websockets-sansio"] = _uvc.WS_PROTOCOLS["websockets"]
-except Exception:
-    pass
-
 app = FastMCP("ProductHunt MCP")
 PH_URL = "https://api.producthunt.com/v2/api/graphql"
 
@@ -22,7 +14,6 @@ def _ph_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 def _iso_day_bounds(day_str: str) -> tuple[str, str]:
-    # postedAfter is inclusive, postedBefore is exclusive
     dt = datetime.fromisoformat(day_str).replace(tzinfo=timezone.utc)
     after = dt.isoformat().replace("+00:00", "Z")
     before = (dt + timedelta(days=1)).isoformat().replace("+00:00", "Z")
@@ -30,25 +21,11 @@ def _iso_day_bounds(day_str: str) -> tuple[str, str]:
 
 _QUERY = """
 query($after: DateTime!, $before: DateTime!, $first: Int!, $cursor: String) {
-  posts(
-    postedAfter: $after,
-    postedBefore: $before,
-    first: $first,
-    after: $cursor,
-    order: RANKING
-  ) {
-    edges {
-      node {
-        id
-        name
-        tagline
-        votesCount
-        createdAt
-        website
-        slug
-        makers { name username }
-      }
-    }
+  posts(postedAfter: $after, postedBefore: $before, first: $first, after: $cursor, order: RANKING) {
+    edges { node {
+      id name tagline votesCount createdAt website slug
+      makers { name username }
+    } }
     pageInfo { endCursor hasNextPage }
   }
 }
@@ -59,10 +36,9 @@ def _fetch_day(day_str: str, budget: int) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     cursor: Optional[str] = None
     while budget > 0:
-        body = {
-            "query": _QUERY,
-            "variables": {"after": after, "before": before, "first": min(30, budget), "cursor": cursor},
-        }
+        body = {"query": _QUERY, "variables": {
+            "after": after, "before": before, "first": min(30, budget), "cursor": cursor
+        }}
         r = requests.post(PH_URL, headers=_ph_headers(), json=body, timeout=30)
         r.raise_for_status()
         payload = r.json()
@@ -102,5 +78,4 @@ def ph_posts(start: str, end: Optional[str] = None, first: int = 100) -> List[Di
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # HTTP transport serves the MCP WebSocket on /mcp
     app.run(transport="http", host="0.0.0.0", port=port)
